@@ -173,9 +173,14 @@ class Sonar3d_driver(Node):
                 z = -radius * math.sin(pitch);
                 pc.append((x,y,z,int_img[i,j]))
 
-        pc = np.array(pc)
-
         header = self.get_header()
+
+        if len(pc) == 0: 
+            msg = PointCloud2()
+            msg.header = header
+            return msg
+
+        pc = np.array(pc)
 
         fields = [
             PointField(name='x', offset=0, datatype=PointField.FLOAT32, count=1),
