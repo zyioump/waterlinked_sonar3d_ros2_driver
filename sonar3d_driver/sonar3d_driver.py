@@ -15,7 +15,7 @@ from cv_bridge import CvBridge
 import cv2 as cv
 import math
 
-from sonar3d_driver.sonar_3d_15_protocol_pb2 import (
+from sonar_3d_15_protocol_pb2 import (
     Packet,
     BitmapImageGreyscale8,
     RangeImage
@@ -249,6 +249,8 @@ class Sonar3d_driver(Node):
         msg.header = self.get_header()
 
         img_ui = cv.applyColorMap(img_ui, cv.COLORMAP_JET)
+        img_ui[img==0] = (0,0,0)
+        img_ui = cv.resize(img_ui, (int(img_ui.shape[1]*self.HFOV/self.VFOV), img_ui.shape[1]))
         msg_ui = self.bridge.cv2_to_compressed_imgmsg(img_ui)
         msg_ui.header = msg.header
 
