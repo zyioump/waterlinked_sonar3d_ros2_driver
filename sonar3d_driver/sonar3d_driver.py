@@ -7,7 +7,7 @@ import numpy as np
 import rclpy
 import requests
 from rclpy.node import Node
-from sensor_msgs.msg import CompressedImage, PointCloud2, PointField
+from sensor_msgs.msg import CompressedImage, PointCloud2, PointField, Image
 from std_srvs.srv import Trigger
 from sensor_msgs_py import point_cloud2
 from std_msgs.msg import Header
@@ -34,11 +34,11 @@ class Sonar3d_driver(Node):
     def __init__(self):
         super().__init__('sonar3d_driver')
         
-        self.range_pub = self.create_publisher(CompressedImage, 'sonar3d/range/compressed', 1)
+        self.range_pub = self.create_publisher(Image, 'sonar3d/range', 1)
         self.range_ui_pub = self.create_publisher(CompressedImage, 'sonar3d/range/ui/compressed', 1)
-        self.int_pub = self.create_publisher(CompressedImage, 'sonar3d/intensity/compressed', 1)
+        self.int_pub = self.create_publisher(Image, 'sonar3d/intensity', 1)
         self.int_ui_pub = self.create_publisher(CompressedImage, 'sonar3d/intensity/ui/compressed', 1)
-        self.range_int_pub = self.create_publisher(CompressedImage, 'sonar3d/range_intensity/compressed', 1)
+        self.range_int_pub = self.create_publisher(Image, 'sonar3d/range_intensity', 1)
         self.pointcloud_pub = self.create_publisher(PointCloud2, 'sonar3d/pointcloud', 1)
 
         self.start_srv = self.create_service(Trigger, 'sonar3d/start', self.start_sonar)
@@ -239,13 +239,13 @@ class Sonar3d_driver(Node):
         new_shape.append(1)
 
         range_int_img = np.concatenate((range_img.reshape(new_shape), int_img.reshape(new_shape), np.zeros(new_shape)), axis=2)
-        msg = self.bridge.cv2_to_compressed_imgmsg(range_int_img)
+        msg = self.bridge.cv2_to_imgmsg(range_int_img)
         msg.header = pc.header
 
         self.range_int_pub.publish(msg)
 
     def publish_img(self, img, img_ui, pub, pub_ui):
-        msg = self.bridge.cv2_to_compressed_imgmsg(img)
+        msg = self.bridge.cv2_to_imgmsg(img)
         msg.header = self.get_header()
 
         img_ui = cv.applyColorMap(img_ui, cv.COLORMAP_JET)
