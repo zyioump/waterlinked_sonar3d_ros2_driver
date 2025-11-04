@@ -30,6 +30,8 @@ class Sonar3d_driver(Node):
     VFOV = math.radians(40)
     HFOV = math.radians(90)
     MAX_RANGE = 15
+    DOWNSAMPLING = 1
+    THRESHOLD = 1
 
     def __init__(self):
         super().__init__('sonar3d_driver')
@@ -162,10 +164,11 @@ class Sonar3d_driver(Node):
     def pair2pc(self, range_img, int_img):
         range_img = np.flip(range_img, 1)
         pc = []
-        for i in range(range_img.shape[0]):
-            for j in range(range_img.shape[1]):
+        for i in range(0, range_img.shape[0], self.DOWNSAMPLING):
+            for j in range(0, range_img.shape[1], self.DOWNSAMPLING):
                 radius = range_img[i,j]
                 if radius == 0: continue
+                if int_img[i,j] < self.THRESHOLD: continue
                 yaw = (j / (range_img.shape[1] - 1))  * self.HFOV - (self.HFOV / 2)
                 pitch = (i / (range_img.shape[0] - 1)) * self.VFOV - (self.VFOV / 2)
                 x = radius * math.cos(pitch) * math.cos(yaw);
