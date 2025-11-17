@@ -31,7 +31,7 @@ class Sonar3d_driver(Node):
     HFOV = math.radians(90)
     MAX_RANGE = 15
     DOWNSAMPLING = 1
-    THRESHOLD = 1
+    THRESHOLD = 0
 
     def __init__(self):
         super().__init__('sonar3d_driver')
