@@ -49,7 +49,7 @@ class Sonar3d_driver(Node):
         self.bridge = CvBridge()
         self.timer = self.create_timer(0.01, self.loop)
 
-        self.MY_IP = socket.gethostbyname(socket.gethostname())
+        self.MY_IP = "192.168.2.16"
 
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -217,25 +217,28 @@ class Sonar3d_driver(Node):
         if result is None: return
 
         msg_type, msg_obj = result
+
         if msg_type == "BitmapImageGreyscale8":
             img = self.to_np(msg_obj, np.uint8)
-            self.publish_img(img, img, self.int_pub, self.int_ui_pub)
+            self.publish_img(img, img, self.int_pub, self.int_ui_pub, msg_obj.header.timestamp)
 
             if len(self.image_sync) == 0: return
-            if self.image_sync[0] == msg_obj.header.sequence_id: self.process_img_pair(self.image_sync[1], img)
+            if self.image_sync[0] == msg_obj.header.sequence_id: self.process_img_pair(self.image_sync[1], img, msg_obj.header.timestamp)
 
         elif msg_type == "RangeImage":
             img = self.to_np(msg_obj, np.uint32).astype(float)
             img *= msg_obj.image_pixel_scale 
-            self.publish_img(img, (255*img/self.MAX_RANGE).astype(np.uint8), self.range_pub, self.range_ui_pub)
+            self.publish_img(img, (255*img/self.MAX_RANGE).astype(np.uint8), self.range_pub, self.range_ui_pub, msg_obj.header.timestamp)
 
             # Range message are received first
             self.image_sync = [msg_obj.header.sequence_id, img]
 
-    def process_img_pair(self, range_img, int_img):
+    def process_img_pair(self, range_img, int_img, timestamp):
         # print("Sonar3d image")
 
         pc = self.pair2pc(range_img, int_img)
+        pc.header.stamp.sec = timestamp.seconds;
+        pc.header.stamp.nanosec = timestamp.nanos;
         self.pointcloud_pub.publish(pc)
 
         new_shape = list(range_img.shape)
@@ -247,15 +250,19 @@ class Sonar3d_driver(Node):
 
         self.range_int_pub.publish(msg)
 
-    def publish_img(self, img, img_ui, pub, pub_ui):
+    def publish_img(self, img, img_ui, pub, pub_ui, timestamp):
         msg = self.bridge.cv2_to_imgmsg(img)
         msg.header = self.get_header()
+        msg.header.stamp.sec = timestamp.seconds;
+        msg.header.stamp.nanosec = timestamp.nanos;
 
         img_ui = cv.applyColorMap(img_ui, cv.COLORMAP_JET)
         img_ui[img==0] = (0,0,0)
         img_ui = cv.resize(img_ui, (int(img_ui.shape[1]*self.HFOV/self.VFOV), img_ui.shape[1]))
         msg_ui = self.bridge.cv2_to_compressed_imgmsg(img_ui)
         msg_ui.header = msg.header
+        msg_ui.header.stamp.sec = timestamp.seconds;
+        msg_ui.header.stamp.nanosec = timestamp.nanos;
 
         pub.publish(msg)
         pub_ui.publish(msg_ui)
