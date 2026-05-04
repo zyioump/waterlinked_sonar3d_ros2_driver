@@ -1,63 +1,71 @@
 #!/usr/bin/env python3
 
+import math
 import socket
 import struct
 import zlib
+
+import cv2 as cv
 import numpy as np
 import rclpy
 import requests
+from cv_bridge import CvBridge
 from rclpy.node import Node
-from sensor_msgs.msg import CompressedImage, PointCloud2, PointField, Image
-from std_srvs.srv import Trigger
+from sensor_msgs.msg import CompressedImage, Image, PointCloud2, PointField
 from sensor_msgs_py import point_cloud2
 from std_msgs.msg import Header
-from cv_bridge import CvBridge
-import cv2 as cv
-import math
+from std_srvs.srv import Trigger
 
-from sonar_3d_15_protocol_pb2 import (
-    Packet,
+from sonar3d_driver.sonar_3d_15_protocol_pb2 import (
     BitmapImageGreyscale8,
-    RangeImage
+    Packet,
+    RangeImage,
 )
+
 
 class Sonar3d_driver(Node):
     BUFFER_SIZE = 65535
     MULTICAST_GROUP = "224.0.0.96"
     SONAR_IP = "192.168.2.199"
+    MY_IP = "192.168.2.16"
+
     PORT = 4747
 
-    VFOV = math.radians(40)
-    HFOV = math.radians(90)
-    MAX_RANGE = 15
     DOWNSAMPLING = 1
     THRESHOLD = 0
 
     def __init__(self):
-        super().__init__('sonar3d_driver')
-        
-        self.range_pub = self.create_publisher(Image, 'sonar3d/range', 1)
-        self.range_ui_pub = self.create_publisher(CompressedImage, 'sonar3d/range/ui/compressed', 1)
-        self.int_pub = self.create_publisher(Image, 'sonar3d/intensity', 1)
-        self.int_ui_pub = self.create_publisher(CompressedImage, 'sonar3d/intensity/ui/compressed', 1)
-        self.range_int_pub = self.create_publisher(Image, 'sonar3d/range_intensity', 1)
-        self.pointcloud_pub = self.create_publisher(PointCloud2, 'sonar3d/pointcloud', 1)
+        super().__init__("sonar3d_driver")
 
-        self.start_srv = self.create_service(Trigger, 'sonar3d/start', self.start_sonar)
-        self.stop_srv = self.create_service(Trigger, 'sonar3d/stop', self.stop_sonar)
+        self.range_pub = self.create_publisher(Image, "sonar3d/range", 1)
+        self.range_ui_pub = self.create_publisher(
+            CompressedImage, "sonar3d/range/ui/compressed", 1
+        )
+        self.int_pub = self.create_publisher(Image, "sonar3d/intensity", 1)
+        self.int_ui_pub = self.create_publisher(
+            CompressedImage, "sonar3d/intensity/ui/compressed", 1
+        )
+        self.range_int_pub = self.create_publisher(Image, "sonar3d/range_intensity", 1)
+        self.pointcloud_pub = self.create_publisher(
+            PointCloud2, "sonar3d/pointcloud", 1
+        )
+
+        self.start_srv = self.create_service(Trigger, "sonar3d/start", self.start_sonar)
+        self.stop_srv = self.create_service(Trigger, "sonar3d/stop", self.stop_sonar)
+        self.status_srv = self.create_service(
+            Trigger, "sonar3d/status", self.get_status
+        )
 
         self.bridge = CvBridge()
         self.timer = self.create_timer(0.01, self.loop)
 
-        self.MY_IP = "192.168.2.16"
-
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.sock.bind(('', self.PORT))
+        self.sock.bind(("", self.PORT))
         self.sock.settimeout(0.2)
 
         group = socket.inet_aton(self.MULTICAST_GROUP)
-        mreq = struct.pack('4s4s', group, socket.inet_aton(self.MY_IP))
+        mreq = struct.pack("4s4s", group, socket.inet_aton(self.MY_IP))
         self.sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
 
         self.image_sync = []
@@ -65,17 +73,43 @@ class Sonar3d_driver(Node):
         print(f"Sonar3d driver started")
 
     def set_acoustics(self, value):
-        res = requests.post(f"http://{self.SONAR_IP}/api/v1/integration/acoustics/enabled", json=value)
-        return res.status_code == 204
+        res = requests.post(
+            f"http://{self.SONAR_IP}/api/v1/integration/acoustics/enabled",
+            json=value,
+            timeout=5,
+        )
+        return res
 
     def start_sonar(self, req, res):
         print("Start pinging")
-        res.success = self.set_acoustics(True)
+        try:
+            api_res = self.set_acoustics(True)
+            res.success = api_res.status_code == 204
+            res.message = api_res.text
+        except requests.exceptions.RequestException as e:
+            res.success = False
+            res.message = repr(e)
         return res
 
     def stop_sonar(self, req, res):
         print("Stop pinging")
-        res.success = self.set_acoustics(False)
+        try:
+            api_res = self.set_acoustics(False)
+            res.success = api_res.status_code == 204
+            res.message = api_res.text
+        except requests.exceptions.RequestException as e:
+            res.success = False
+            res.message = repr(e)
+        return res
+
+    def get_status(self, req, res):
+        try:
+            api_res = requests.get(f"http://{self.SONAR_IP}/api/v1/integration/status")
+            res.success = api_res.status_code == 200
+            res.message = api_res.text
+        except requests.exceptions.RequestException as e:
+            res.success = False
+            res.message = repr(e)
         return res
 
     def parse_rip1_packet(self, data: bytes):
@@ -95,26 +129,26 @@ class Sonar3d_driver(Node):
 
         # First 4 bytes are "RIP1"
         magic = data[:4]
-        if magic != b'RIP1':
+        if magic != b"RIP1":
             print(f"Invalid magic: got {magic!r} instead of b'RIP1'.")
             return None
 
         # Next 4 bytes (little-endian) specify the total packet length
-        total_length = struct.unpack('<I', data[4:8])[0]
+        total_length = struct.unpack("<I", data[4:8])[0]
         if len(data) < total_length:
-            print(
-                f"Packet truncated: needed {total_length} bytes, got {len(data)}.")
+            print(f"Packet truncated: needed {total_length} bytes, got {len(data)}.")
             return None
 
         # The payload is between offset 8 and (total_length - 4)
-        payload = data[8: total_length - 4]
+        payload = data[8 : total_length - 4]
 
         # Last 4 bytes in the packet is the CRC32
-        crc_received = struct.unpack('<I', data[total_length - 4: total_length])[0]
-        crc_calculated = zlib.crc32(data[: total_length - 4]) & 0xffffffff
+        crc_received = struct.unpack("<I", data[total_length - 4 : total_length])[0]
+        crc_calculated = zlib.crc32(data[: total_length - 4]) & 0xFFFFFFFF
         if crc_calculated != crc_received:
             print(
-                f"CRC mismatch: expected 0x{crc_calculated:08x}, got 0x{crc_received:08x}.")
+                f"CRC mismatch: expected 0x{crc_calculated:08x}, got 0x{crc_received:08x}."
+            )
             return None
 
         return payload
@@ -166,19 +200,21 @@ class Sonar3d_driver(Node):
         pc = []
         for i in range(0, range_img.shape[0], self.DOWNSAMPLING):
             for j in range(0, range_img.shape[1], self.DOWNSAMPLING):
-                radius = range_img[i,j]
-                if radius == 0: continue
-                if int_img[i,j] < self.THRESHOLD: continue
-                yaw = (j / (range_img.shape[1] - 1))  * self.HFOV - (self.HFOV / 2)
+                radius = range_img[i, j]
+                if radius == 0:
+                    continue
+                if int_img[i, j] < self.THRESHOLD:
+                    continue
+                yaw = (j / (range_img.shape[1] - 1)) * self.HFOV - (self.HFOV / 2)
                 pitch = (i / (range_img.shape[0] - 1)) * self.VFOV - (self.VFOV / 2)
-                x = radius * math.cos(pitch) * math.cos(yaw);
-                y = radius * math.cos(pitch) * math.sin(yaw);
-                z = -radius * math.sin(pitch);
-                pc.append((x,y,z,int_img[i,j]))
+                x = radius * math.cos(pitch) * math.cos(yaw)
+                y = radius * math.cos(pitch) * math.sin(yaw)
+                z = -radius * math.sin(pitch)
+                pc.append((x, y, z, int_img[i, j]))
 
         header = self.get_header()
 
-        if len(pc) == 0: 
+        if len(pc) == 0:
             msg = PointCloud2()
             msg.header = header
             return msg
@@ -186,10 +222,12 @@ class Sonar3d_driver(Node):
         pc = np.array(pc)
 
         fields = [
-            PointField(name='x', offset=0, datatype=PointField.FLOAT32, count=1),
-            PointField(name='y', offset=4, datatype=PointField.FLOAT32, count=1),
-            PointField(name='z', offset=8, datatype=PointField.FLOAT32, count=1),
-            PointField(name='intensity', offset=12, datatype=PointField.FLOAT32, count=1)
+            PointField(name="x", offset=0, datatype=PointField.FLOAT32, count=1),
+            PointField(name="y", offset=4, datatype=PointField.FLOAT32, count=1),
+            PointField(name="z", offset=8, datatype=PointField.FLOAT32, count=1),
+            PointField(
+                name="intensity", offset=12, datatype=PointField.FLOAT32, count=1
+            ),
         ]
 
         msg = point_cloud2.create_cloud(header, fields, pc)
@@ -208,27 +246,47 @@ class Sonar3d_driver(Node):
             data, address = self.sock.recvfrom(self.BUFFER_SIZE)
         except TimeoutError:
             return
-        if address[0] != self.SONAR_IP: return
-        
+        if address[0] != self.SONAR_IP:
+            return
+
         payload = self.parse_rip1_packet(data)
-        if payload is None: return
+        if payload is None:
+            return
 
         result = self.decode_protobuf_packet(payload)
-        if result is None: return
+        if result is None:
+            return
 
         msg_type, msg_obj = result
 
+        if msg_type == "Unknown":
+            return
+
+        self.HFOV = math.radians(msg_obj.fov_horizontal)
+        self.VFOV = math.radians(msg_obj.fov_vertical)
+        self.MAX_RANGE = msg_obj.range
+
         if msg_type == "BitmapImageGreyscale8":
             img = self.to_np(msg_obj, np.uint8)
-            self.publish_img(img, img, self.int_pub, self.int_ui_pub, msg_obj.header.timestamp)
+            self.publish_img(
+                img, img, self.int_pub, self.int_ui_pub, msg_obj.header.timestamp
+            )
 
-            if len(self.image_sync) == 0: return
-            if self.image_sync[0] == msg_obj.header.sequence_id: self.process_img_pair(self.image_sync[1], img, msg_obj.header.timestamp)
+            if len(self.image_sync) == 0:
+                return
+            if self.image_sync[0] == msg_obj.header.sequence_id:
+                self.process_img_pair(self.image_sync[1], img, msg_obj.header.timestamp)
 
         elif msg_type == "RangeImage":
             img = self.to_np(msg_obj, np.uint32).astype(float)
-            img *= msg_obj.image_pixel_scale 
-            self.publish_img(img, (255*img/self.MAX_RANGE).astype(np.uint8), self.range_pub, self.range_ui_pub, msg_obj.header.timestamp)
+            img *= msg_obj.image_pixel_scale
+            self.publish_img(
+                img,
+                (255 * img / self.MAX_RANGE).astype(np.uint8),
+                self.range_pub,
+                self.range_ui_pub,
+                msg_obj.header.timestamp,
+            )
 
             # Range message are received first
             self.image_sync = [msg_obj.header.sequence_id, img]
@@ -237,14 +295,21 @@ class Sonar3d_driver(Node):
         # print("Sonar3d image")
 
         pc = self.pair2pc(range_img, int_img)
-        pc.header.stamp.sec = timestamp.seconds;
-        pc.header.stamp.nanosec = timestamp.nanos;
+        pc.header.stamp.sec = timestamp.seconds
+        pc.header.stamp.nanosec = timestamp.nanos
         self.pointcloud_pub.publish(pc)
 
         new_shape = list(range_img.shape)
         new_shape.append(1)
 
-        range_int_img = np.concatenate((range_img.reshape(new_shape), int_img.reshape(new_shape), np.zeros(new_shape)), axis=2)
+        range_int_img = np.concatenate(
+            (
+                range_img.reshape(new_shape),
+                int_img.reshape(new_shape),
+                np.zeros(new_shape),
+            ),
+            axis=2,
+        )
         msg = self.bridge.cv2_to_imgmsg(range_int_img)
         msg.header = pc.header
 
@@ -253,35 +318,36 @@ class Sonar3d_driver(Node):
     def publish_img(self, img, img_ui, pub, pub_ui, timestamp):
         msg = self.bridge.cv2_to_imgmsg(img)
         msg.header = self.get_header()
-        msg.header.stamp.sec = timestamp.seconds;
-        msg.header.stamp.nanosec = timestamp.nanos;
-
+        msg.header.stamp.sec = timestamp.seconds
+        msg.header.stamp.nanosec = timestamp.nanos
         img_ui = cv.applyColorMap(img_ui, cv.COLORMAP_JET)
-        img_ui[img==0] = (0,0,0)
-        img_ui = cv.resize(img_ui, (int(img_ui.shape[1]*self.HFOV/self.VFOV), img_ui.shape[1]))
+        img_ui[img == 0] = (0, 0, 0)
+        img_ui = cv.resize(
+            img_ui, (int(img_ui.shape[1] * self.HFOV / self.VFOV), img_ui.shape[1])
+        )
         msg_ui = self.bridge.cv2_to_compressed_imgmsg(img_ui)
         msg_ui.header = msg.header
-        msg_ui.header.stamp.sec = timestamp.seconds;
-        msg_ui.header.stamp.nanosec = timestamp.nanos;
-
+        msg_ui.header.stamp.sec = timestamp.seconds
+        msg_ui.header.stamp.nanosec = timestamp.nanos
         pub.publish(msg)
         pub_ui.publish(msg_ui)
 
     def __del__(self):
         self.sock.close()
 
+
 def main(args=None):
     rclpy.init(args=args)
     driver = Sonar3d_driver()
-    
+
     try:
         rclpy.spin(driver)
     except KeyboardInterrupt:
         pass
-    
+
     driver.destroy_node()
     rclpy.shutdown()
 
-if __name__ == '__main__':
-    main()
 
+if __name__ == "__main__":
+    main()
