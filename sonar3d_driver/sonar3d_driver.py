@@ -4,6 +4,7 @@ import math
 import socket
 import struct
 import zlib
+import snappy
 
 import cv2 as cv
 import numpy as np
@@ -26,8 +27,6 @@ from sonar3d_driver.sonar_3d_15_protocol_pb2 import (
 class Sonar3d_driver(Node):
     BUFFER_SIZE = 65535
     MULTICAST_GROUP = "224.0.0.96"
-    SONAR_IP = "192.168.2.199"
-    MY_IP = "192.168.2.16"
 
     PORT = 4747
 
@@ -36,6 +35,11 @@ class Sonar3d_driver(Node):
 
     def __init__(self):
         super().__init__("sonar3d_driver")
+
+        self.declare_parameter("sonar.ip", "192.168.2.199")
+
+        self.sonar_ip = self.get_parameter("sonar.ip").value
+        self.interface_ip = self.get_interface_ip(self.sonar_ip)
 
         self.range_pub = self.create_publisher(Image, "sonar3d/range", 1)
         self.range_ui_pub = self.create_publisher(
@@ -65,16 +69,30 @@ class Sonar3d_driver(Node):
         self.sock.settimeout(0.2)
 
         group = socket.inet_aton(self.MULTICAST_GROUP)
-        mreq = struct.pack("4s4s", group, socket.inet_aton(self.MY_IP))
+        mreq = struct.pack("4s4s", group, socket.inet_aton(self.interface_ip))
         self.sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
 
         self.image_sync = []
 
-        print(f"Sonar3d driver started")
+        print(
+            f"Sonar3d driver started for {self.sonar_ip} "
+            f"via interface {self.interface_ip}"
+        )
+
+    def get_interface_ip(self, peer_ip):
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as route_sock:
+                route_sock.connect((peer_ip, self.PORT))
+                return route_sock.getsockname()[0]
+        except OSError as exc:
+            raise RuntimeError(
+                f"Could not determine local interface IP for sonar {peer_ip}. "
+                "Check that this host has a route to the sonar subnet."
+            ) from exc
 
     def set_acoustics(self, value):
         res = requests.post(
-            f"http://{self.SONAR_IP}/api/v1/integration/acoustics/enabled",
+            f"http://{self.sonar_ip}/api/v1/integration/acoustics/enabled",
             json=value,
             timeout=5,
         )
@@ -104,7 +122,7 @@ class Sonar3d_driver(Node):
 
     def get_status(self, req, res):
         try:
-            api_res = requests.get(f"http://{self.SONAR_IP}/api/v1/integration/status")
+            api_res = requests.get(f"http://{self.sonar_ip}/api/v1/integration/status")
             res.success = api_res.status_code == 200
             res.message = api_res.text
         except requests.exceptions.RequestException as e:
@@ -112,13 +130,14 @@ class Sonar3d_driver(Node):
             res.message = repr(e)
         return res
 
-    def parse_rip1_packet(self, data: bytes):
+    def parse_rip2_packet(self, data: bytes):
         """
-        Parse the RIP1 framing:
-          1. Verify the "RIP1" magic header
+        Parse the RIP2 framing:
+          1. Verify the "RIP2" magic header
           2. Verify total_length field matches the data size
           3. Check CRC
-          4. Extract payload (proto data) from the packet
+          4. Extract payload (compressed protobuf data) from the packet
+          5. Decompress the payload using Snappy
 
         Returns:
           payload (bytes) if valid, or None if there's an error.
@@ -127,10 +146,10 @@ class Sonar3d_driver(Node):
             print(f"Packet too small: only {len(data)} bytes.")
             return None
 
-        # First 4 bytes are "RIP1"
+        # First 4 bytes are "RIP2"
         magic = data[:4]
-        if magic != b"RIP1":
-            print(f"Invalid magic: got {magic!r} instead of b'RIP1'.")
+        if magic != b"RIP2":
+            print(f"Invalid magic: got {magic!r} instead of b'RIP2'.")
             return None
 
         # Next 4 bytes (little-endian) specify the total packet length
@@ -140,7 +159,7 @@ class Sonar3d_driver(Node):
             return None
 
         # The payload is between offset 8 and (total_length - 4)
-        payload = data[8 : total_length - 4]
+        compressed_payload = data[8 : total_length - 4]
 
         # Last 4 bytes in the packet is the CRC32
         crc_received = struct.unpack("<I", data[total_length - 4 : total_length])[0]
@@ -149,6 +168,13 @@ class Sonar3d_driver(Node):
             print(
                 f"CRC mismatch: expected 0x{crc_calculated:08x}, got 0x{crc_received:08x}."
             )
+            return None
+
+        # Decompress the payload
+        try:
+            payload = snappy.decompress(compressed_payload)
+        except Exception as e:
+            print(f"Snappy decompression error: {e}")
             return None
 
         return payload
@@ -246,10 +272,10 @@ class Sonar3d_driver(Node):
             data, address = self.sock.recvfrom(self.BUFFER_SIZE)
         except TimeoutError:
             return
-        if address[0] != self.SONAR_IP:
+        if address[0] != self.sonar_ip:
             return
 
-        payload = self.parse_rip1_packet(data)
+        payload = self.parse_rip2_packet(data)
         if payload is None:
             return
 
@@ -333,7 +359,8 @@ class Sonar3d_driver(Node):
         pub_ui.publish(msg_ui)
 
     def __del__(self):
-        self.sock.close()
+        if hasattr(self, "sock"):
+            self.sock.close()
 
 
 def main(args=None):

@@ -1,0 +1,3 @@
+sonar3d_driver:
+  ros__parameters:
+    sonar.ip: "192.168.2.199"
