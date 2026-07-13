@@ -59,6 +59,9 @@ class Sonar3d_driver(Node):
         self.status_srv = self.create_service(
             Trigger, "sonar3d/status", self.get_status
         )
+        self.ip_srv = self.create_service(
+            Trigger, "sonar3d/get_ip", self.get_sonar_ip
+        )
 
         self.bridge = CvBridge()
         self.timer = self.create_timer(0.01, self.loop)
@@ -128,6 +131,11 @@ class Sonar3d_driver(Node):
         except requests.exceptions.RequestException as e:
             res.success = False
             res.message = repr(e)
+        return res
+
+    def get_sonar_ip(self, req, res):
+        res.success = True
+        res.message = self.sonar_ip
         return res
 
     def parse_rip2_packet(self, data: bytes):
