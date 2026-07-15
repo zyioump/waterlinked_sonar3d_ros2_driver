@@ -77,7 +77,7 @@ class Sonar3d_driver(Node):
 
         self.image_sync = []
 
-        print(
+        self.get_logger().info(
             f"Sonar3d driver started for {self.sonar_ip} "
             f"via interface {self.interface_ip}"
         )
@@ -102,7 +102,7 @@ class Sonar3d_driver(Node):
         return res
 
     def start_sonar(self, req, res):
-        print("Start pinging")
+        self.get_logger().info("Start pinging")
         try:
             api_res = self.set_acoustics(True)
             res.success = api_res.status_code == 204
@@ -113,7 +113,7 @@ class Sonar3d_driver(Node):
         return res
 
     def stop_sonar(self, req, res):
-        print("Stop pinging")
+        self.get_logger().info("Stop pinging")
         try:
             api_res = self.set_acoustics(False)
             res.success = api_res.status_code == 204
@@ -151,19 +151,23 @@ class Sonar3d_driver(Node):
           payload (bytes) if valid, or None if there's an error.
         """
         if len(data) < 13:
-            print(f"Packet too small: only {len(data)} bytes.")
+            self.get_logger().warning(f"Packet too small: only {len(data)} bytes.")
             return None
 
         # First 4 bytes are "RIP2"
         magic = data[:4]
         if magic != b"RIP2":
-            print(f"Invalid magic: got {magic!r} instead of b'RIP2'.")
+            self.get_logger().warning(
+                f"Invalid magic: got {magic!r} instead of b'RIP2'."
+            )
             return None
 
         # Next 4 bytes (little-endian) specify the total packet length
         total_length = struct.unpack("<I", data[4:8])[0]
         if len(data) < total_length:
-            print(f"Packet truncated: needed {total_length} bytes, got {len(data)}.")
+            self.get_logger().warning(
+                f"Packet truncated: needed {total_length} bytes, got {len(data)}."
+            )
             return None
 
         # The payload is between offset 8 and (total_length - 4)
@@ -173,7 +177,7 @@ class Sonar3d_driver(Node):
         crc_received = struct.unpack("<I", data[total_length - 4 : total_length])[0]
         crc_calculated = zlib.crc32(data[: total_length - 4]) & 0xFFFFFFFF
         if crc_calculated != crc_received:
-            print(
+            self.get_logger().warning(
                 f"CRC mismatch: expected 0x{crc_calculated:08x}, got 0x{crc_received:08x}."
             )
             return None
@@ -182,7 +186,7 @@ class Sonar3d_driver(Node):
         try:
             payload = snappy.decompress(compressed_payload)
         except Exception as e:
-            print(f"Snappy decompression error: {e}")
+            self.get_logger().error(f"Snappy decompression error: {e}")
             return None
 
         return payload
@@ -203,7 +207,7 @@ class Sonar3d_driver(Node):
         try:
             packet.ParseFromString(payload)
         except Exception as e:
-            print(f"Protobuf parse error: {e}")
+            self.get_logger().error(f"Protobuf parse error: {e}")
             return None
 
         # The actual data is in the .msg field (type google.protobuf.Any)
@@ -326,8 +330,6 @@ class Sonar3d_driver(Node):
             self.image_sync = [msg_obj.header.sequence_id, img]
 
     def process_img_pair(self, range_img, int_img, timestamp):
-        # print("Sonar3d image")
-
         pc = self.pair2pc(range_img, int_img)
         pc.header.stamp.sec = timestamp.seconds
         pc.header.stamp.nanosec = timestamp.nanos
