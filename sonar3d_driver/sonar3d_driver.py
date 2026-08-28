@@ -12,6 +12,7 @@ import rclpy
 import requests
 from cv_bridge import CvBridge
 from rcl_interfaces.msg import Log
+from rclpy.logging import LoggingSeverity
 from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSProfile, QoSReliabilityPolicy
 from sensor_msgs.msg import CompressedImage, Image, PointCloud2, PointField
@@ -147,7 +148,7 @@ class Sonar3d_driver(Node):
         if not self.health_log_reported[condition]:
             return
 
-        self.publish_log(Log.INFO, message)
+        self.publish_log(LoggingSeverity.INFO.value, message)
         self.health_log_reported[condition] = False
 
     def check_health(self):
@@ -166,7 +167,7 @@ class Sonar3d_driver(Node):
             self.get_logger().error(f"Sonar3d status request failed: {exc}")
             self.publish_log_once(
                 "sonar_unavailable",
-                Log.ERROR,
+                LoggingSeverity.ERROR.value,
                 "Sonar3d is not available",
             )
             return
@@ -195,7 +196,7 @@ class Sonar3d_driver(Node):
             else:
                 self.publish_log_once(
                     "time_unsynchronized",
-                    Log.ERROR,
+                    LoggingSeverity.ERROR.value,
                     "Sonar3d time is not synchronized",
                 )
         except (requests.exceptions.RequestException, ValueError) as exc:
@@ -244,7 +245,7 @@ class Sonar3d_driver(Node):
         if not acoustics_enabled:
             self.publish_log_once(
                 "acoustics_disabled",
-                Log.WARN,
+                LoggingSeverity.WARN.value,
                 "Sonar3d acoustics are not enabled",
             )
             return
