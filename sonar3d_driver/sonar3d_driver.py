@@ -5,6 +5,7 @@ import socket
 import struct
 import zlib
 import snappy
+import json
 
 import cv2 as cv
 import numpy as np
@@ -165,6 +166,8 @@ class Sonar3d_driver(Node):
             )
         except requests.exceptions.RequestException as exc:
             self.get_logger().error(f"Sonar3d status request failed: {exc}")
+            self.health_log_reported["acoustics_disabled"] = False
+            self.health_log_reported["time_unsynchronized"] = False
             self.publish_log_once(
                 "sonar_unavailable",
                 LoggingSeverity.ERROR.value,
@@ -246,7 +249,7 @@ class Sonar3d_driver(Node):
             self.publish_log_once(
                 "acoustics_disabled",
                 LoggingSeverity.WARN.value,
-                "Sonar3d acoustics are not enabled",
+                "Sonar3d acoustics are disabled",
             )
             return
 
@@ -293,7 +296,7 @@ class Sonar3d_driver(Node):
                 timeout=self.health_request_timeout,
             )
             res.success = api_res.status_code == 200
-            res.message = api_res.text
+            res.message = json.dumps(json.loads(api_res.text), indent=2)
         except requests.exceptions.RequestException as exc:
             self.get_logger().error(f"Sonar3d status request failed: {exc}")
             res.success = False
