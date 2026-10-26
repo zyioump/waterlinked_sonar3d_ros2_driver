@@ -1,10 +1,14 @@
 # Waterlinked Sonar3d driver
 
-Please generate the protobuff python msg file before running the driver:
+The driver uses Water Linked's [wlsonar](https://github.com/waterlinked/wlsonar) library,
+which is not available through rosdep. Install it with pip before running the driver:
 
 ```bash
-./generate_protobuf_file.sh
+pip install wlsonar
 ```
+
+wlsonar requires protobuf >= 6.33.2, which is newer than the version shipped with
+Ubuntu/ROS, so pip will install a newer protobuf alongside it.
 
 Then start the driver and enable accoustics:
 ```bash

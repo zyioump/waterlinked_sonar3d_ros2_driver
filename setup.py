@@ -11,7 +11,7 @@ setup(
         ("share/" + package_name, ["package.xml"]),
         ("share/" + package_name + "/config", ["config/sonar3d.yaml"]),
     ],
-    install_requires=["setuptools", "python-snappy"],
+    install_requires=["setuptools", "wlsonar"],
     zip_safe=True,
     maintainer="sa3022",
     maintainer_email="simon.archieri@gmail.com",
